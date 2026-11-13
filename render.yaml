@@ -1,0 +1,32 @@
+# Blueprint Render : un service web Python + une base PostgreSQL.
+# Sur Render : New > Blueprint > choisir le dépôt > Apply.
+services:
+  - type: web
+    name: caviste
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/config
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: caviste-db
+          property: connectionString
+      - key: CAVISTE_SECRET
+        generateValue: true
+      - key: CAVISTE_SHOP_NAME
+        value: La Cave
+      - key: CAVISTE_CURRENCY
+        value: FCFA
+
+databases:
+  - name: caviste-db
+    plan: free
+    region: frankfurt
+    databaseName: caviste
+    user: caviste
