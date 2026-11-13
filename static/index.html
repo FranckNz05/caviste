@@ -85,14 +85,14 @@
 
         <div v-else-if="pos.mode === 'passation'" key="handover" class="stack">
           <div class="page-head">
-            <div class="title"><div><h1>Passation</h1><p>Le rayon et la caisse sont comptés, puis certifiés par la personne entrante.</p></div></div>
+            <div class="title"><div><h1>{{ handover.closing ? 'Fermeture de la caisse' : 'Passation' }}</h1><p>{{ handover.closing ? 'Le rayon et la caisse sont comptés, puis vous confirmez seule : le rayon est certifié pour demain.' : 'Le rayon et la caisse sont comptés, puis certifiés par la personne entrante.' }}</p></div></div>
           </div>
           <div class="stepper">
             <div class="step" :class="{on: handover.step === 1, done: handover.step > 1}"><span class="n"><ico v-if="handover.step > 1" name="check" class="sm"></ico><template v-else>1</template></span> Rayon</div>
             <div class="step-line" :class="{done: handover.step > 1}"></div>
             <div class="step" :class="{on: handover.step === 2, done: handover.step > 2}"><span class="n"><ico v-if="handover.step > 2" name="check" class="sm"></ico><template v-else>2</template></span> Espèces</div>
             <div class="step-line" :class="{done: handover.step > 2}"></div>
-            <div class="step" :class="{on: handover.step === 3, done: handover.step > 3}"><span class="n"><ico v-if="handover.step > 3" name="check" class="sm"></ico><template v-else>3</template></span> Validation</div>
+            <div class="step" :class="{on: handover.step === 3, done: handover.step > 3}"><span class="n"><ico v-if="handover.step > 3" name="check" class="sm"></ico><template v-else>3</template></span> {{ handover.closing ? 'Confirmation' : 'Validation' }}</div>
             <div class="step-line" :class="{done: handover.step > 3}"></div>
             <div class="step" :class="{on: handover.step === 4}"><span class="n">4</span> Résultat</div>
           </div>
@@ -127,8 +127,9 @@
             </div>
 
             <div v-else-if="handover.step === 3" key="s3" class="panel stack" style="max-width: 580px; margin: 0 auto; overflow: visible">
-              <div><h2>Qui reprend la caisse ?</h2><p class="muted" style="margin-top: 6px">La personne entrante (ou le propriétaire) confirme avec son code qu'elle accepte le rayon et la caisse tels que comptés.</p></div>
-              <div class="user-grid">
+              <div v-if="handover.closing"><h2>Confirmez la fermeture</h2><p class="muted" style="margin-top: 6px">Personne ne reprend la caisse. Confirmez avec votre code que le comptage et les espèces sont ceux que vous laissez.</p></div>
+              <div v-else><h2>Qui reprend la caisse ?</h2><p class="muted" style="margin-top: 6px">La personne entrante (ou le propriétaire) confirme avec son code qu'elle accepte le rayon et la caisse tels que comptés.</p></div>
+              <div v-if="!handover.closing" class="user-grid">
                 <div v-for="u in validators" :key="u.id" class="user-tile" :class="{selected: handover.validatorId === u.id}" @click="handover.validatorId = u.id; handover.pin = ''">
                   <span class="avatar xl" :style="{background: u.color}">{{ initials(u.name) }}</span>
                   <strong>{{ u.name }}</strong>
@@ -143,7 +144,7 @@
                     <button @click="handover.pin += '0'">0</button>
                     <button class="ghost" @click="handover.pin = handover.pin.slice(0, -1)"><ico name="backspace"></ico></button>
                   </div>
-                  <button class="primary big" style="margin-top: 14px; width: 100%" :disabled="handover.pin.length < 4" @click="closeSession()"><ico name="check"></ico> Valider la passation</button>
+                  <button class="primary big" style="margin-top: 14px; width: 100%" :disabled="handover.pin.length < 4" @click="closeSession()"><ico name="check"></ico> {{ handover.closing ? 'Fermer la caisse' : 'Valider la passation' }}</button>
                 </div>
               </transition>
             </div>
@@ -180,7 +181,7 @@
                 </table>
               </div>
               <div class="hint ok" v-else><ico name="check"></ico><span><strong>Rayon conforme.</strong> Aucun écart sur les produits comptés.</span></div>
-              <p class="result-note"><ico name="shield" class="sm"></ico> Session de {{ handover.result.user_name }} fermée, validée par {{ handover.result.validated_by_name }}. Le rayon est certifié pour la personne suivante.</p>
+              <p class="result-note"><ico name="shield" class="sm"></ico> <span v-if="handover.closing">Caisse fermée par {{ handover.result.user_name }}. Le rayon est certifié pour la prochaine ouverture.</span><span v-else>Session de {{ handover.result.user_name }} fermée, validée par {{ handover.result.validated_by_name }}. Le rayon est certifié pour la personne suivante.</span></p>
               <button class="primary big" @click="finishHandover()">Terminer</button>
             </div>
           </transition>
@@ -194,7 +195,10 @@
               <button :class="{active: pos.mode === 'ventes'}" @click="pos.mode = 'ventes'; loadSales()"><ico name="receipt" class="sm"></ico> Mes ventes <span class="count">{{ session.sales_count }}</span></button>
               <button :class="{active: pos.mode === 'retour'}" @click="openReturns()"><ico name="swap" class="sm"></ico> Retour / échange</button>
             </div>
-            <button @click="startHandover()"><ico name="swap"></ico> Passer la caisse</button>
+            <div class="row" style="gap: 8px">
+              <button @click="startHandover(false)"><ico name="swap"></ico> Passer la caisse</button>
+              <button class="dark" @click="startHandover(true)"><ico name="lock-open"></ico> Fermer la caisse</button>
+            </div>
           </div>
 
           <transition name="fade" mode="out-in">
@@ -765,6 +769,6 @@
     <div v-if="toast" class="toast" :class="toast.type"><ico :name="toast.type === 'error' ? 'alert' : 'check'" class="sm"></ico>{{ toast.text }}</div>
   </transition>
 </div>
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=10"></script>
 </body>
 </html>

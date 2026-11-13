@@ -67,7 +67,7 @@ const app = createApp({
       cart: [],
       sales: [],
       flash: null,
-      handover: { step: 1, count: null, counted: {}, closingCash: null, validatorId: null, pin: "", result: null },
+      handover: { step: 1, count: null, counted: {}, closingCash: null, validatorId: null, pin: "", result: null, closing: false },
       // gestion
       admin: { tab: "tableau", days: 30, search: "", expanded: null },
       adminTabs: [
@@ -352,9 +352,10 @@ const app = createApp({
       this.focusSearch();
     },
     waveHandover() {
+      const closing = this.wave.kind === "fermeture";
       this.wave.shown = false;
       this.wave.snoozeUntil = Date.now() + 60 * 60 * 1000;
-      this.startHandover();
+      this.startHandover(closing);
     },
     openSession() {
       return this.run(async () => {
@@ -474,12 +475,12 @@ const app = createApp({
     },
 
     // ---- passation
-    startHandover() {
+    startHandover(closing = false) {
       return this.run(async () => {
         const count = await this.api("POST", "/api/session/close/prepare");
         const counted = {};
         for (const l of count.lines) counted[l.product_id] = "";
-        this.handover = { step: 1, count, counted, closingCash: null, validatorId: null, pin: "", result: null };
+        this.handover = { step: 1, count, counted, closingCash: null, validatorId: closing ? this.me.id : null, pin: "", result: null, closing };
         this.pos.mode = "passation";
         await this.refreshSessionQuiet();
         this.$nextTick(() => { const el = document.getElementById("cnt-0"); el && el.focus(); });
@@ -514,6 +515,7 @@ const app = createApp({
           closing_cash: Number(this.handover.closingCash) || 0,
           validator_id: this.handover.validatorId,
           validator_pin: this.handover.pin,
+          closing: this.handover.closing,
         });
         result._count = this.handover.count;
         this.handover.result = result;
@@ -521,10 +523,11 @@ const app = createApp({
       }).then(() => { if (this.handover.step === 3) { this.handover.pin = ""; this.shakeNow(); } });
     },
     async finishHandover() {
+      const closing = this.handover.closing;
       this.pos.mode = "vente";
-      this.handover = { step: 1, count: null, counted: {}, closingCash: null, validatorId: null, pin: "", result: null };
+      this.handover = { step: 1, count: null, counted: {}, closingCash: null, validatorId: null, pin: "", result: null, closing: false };
       if (this.isOwner) { await this.goAdmin(); }
-      else { this.logout(true); this.notify("Passation terminée. La personne suivante peut se connecter."); }
+      else { this.logout(true); this.notify(closing ? "Caisse fermée. À demain !" : "Passation terminée. La personne suivante peut se connecter."); }
     },
 
     // ---- gestion

@@ -506,6 +506,7 @@ def close_session(
     validator: User,
     notes: str = "",
     force: bool = False,
+    closing: bool = False,
     at: datetime | None = None,
 ) -> CashSession:
     if session.status == "fermee":
@@ -542,10 +543,11 @@ def close_session(
     audit(
         db,
         validator,
-        "session_fermee" if not force else "session_forcee",
+        "session_forcee" if force else ("caisse_fermee" if closing else "passation"),
         "session",
         session.id,
         {"caissiere": session.user.name, "cash_gap": session.cash_gap, "missing_value": session.missing_value},
+        at=at,
     )
     return session
 

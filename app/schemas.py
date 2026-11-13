@@ -189,6 +189,7 @@ class SessionCloseIn(BaseModel):
     validator_pin: str
     notes: str = ""
     force: bool = False  # propriétaire seulement : clôture sans comptage
+    closing: bool = False  # fermeture du magasin : la caissière confirme seule, personne ne reprend la caisse
 
 
 # --- Ventes ---------------------------------------------------------------------

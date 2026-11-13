@@ -30,4 +30,5 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    # Toujours revalider la page : les scripts et styles portent un numéro de version.
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})

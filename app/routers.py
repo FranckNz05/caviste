@@ -282,11 +282,14 @@ def close_session(data: SessionCloseIn, user: User = Depends(current_user), db: 
     if not s:
         raise HTTPException(409, "Aucune session ouverte")
     validator = check_user_pin(db, data.validator_id, data.validator_pin)
-    if validator.id == s.user_id and validator.role != "proprietaire":
+    if data.closing:
+        if validator.id != s.user_id and validator.role != "proprietaire":
+            raise HTTPException(400, "La fermeture se confirme avec votre propre code")
+    elif validator.id == s.user_id and validator.role != "proprietaire":
         raise HTTPException(400, "La passation doit être validée par une autre personne (caissière entrante ou propriétaire)")
     if data.force and user.role != "proprietaire":
         raise HTTPException(403, "Seul le propriétaire peut forcer une clôture")
-    services.close_session(db, s, data.closing_cash, validator, data.notes, force=data.force)
+    services.close_session(db, s, data.closing_cash, validator, data.notes, force=data.force, closing=data.closing)
     db.commit()
     db.refresh(s)
     return _session_out(s)
