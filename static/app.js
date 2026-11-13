@@ -163,6 +163,7 @@ const app = createApp({
       if (this.flash) this.flash = null;
       if (this.modal) { if (k === "Escape") this.modal = null; return; }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (this.view === "standby") { if (k === "Enter" || k === "Escape") this.view = "login"; return; }
       if (this.view === "login" && this.loginUser) {
         if (/^\d$/.test(k)) this.pinKey(k);
         else if (k === "Backspace") this.pin = this.pin.slice(0, -1);
@@ -480,10 +481,16 @@ const app = createApp({
         const count = await this.api("POST", "/api/session/close/prepare");
         const counted = {};
         for (const l of count.lines) counted[l.product_id] = "";
-        this.handover = { step: 1, count, counted, closingCash: null, validatorId: closing ? this.me.id : null, pin: "", result: null, closing };
+        const resumed = count.status === "termine";
+        this.handover = { step: resumed ? 2 : 1, count, counted, closingCash: null, validatorId: closing ? this.me.id : null, pin: "", result: null, closing };
         this.pos.mode = "passation";
         await this.refreshSessionQuiet();
-        this.$nextTick(() => { const el = document.getElementById("cnt-0"); el && el.focus(); });
+        if (resumed) {
+          this.handover.closingCash = this.session.opening_cash + this.session.sales_cash - (this.session.refunds_cash || 0);
+          this.notify("Le comptage du rayon est déjà validé : il reste les espèces et la confirmation.");
+        } else {
+          this.$nextTick(() => { const el = document.getElementById("cnt-0"); el && el.focus(); });
+        }
       });
     },
     async refreshSessionQuiet() {
@@ -504,11 +511,18 @@ const app = createApp({
       this.modal = null;
       return this.run(async () => {
         const lines = this.handover.count.lines.map((l) => ({ product_id: l.product_id, counted_qty: Number(this.handover.counted[l.product_id]) }));
-        this.handover.count = await this.api("POST", `/api/counts/${this.handover.count.id}/submit`, { lines });
-        this.handover.closingCash = this.session.opening_cash + this.session.sales_cash;
+        try {
+          this.handover.count = await this.api("POST", `/api/counts/${this.handover.count.id}/submit`, { lines });
+        } catch (e) {
+          if (!String(e.message).includes("déjà terminé")) throw e;
+          this.handover.count = await this.api("GET", `/api/counts/${this.handover.count.id}`);
+          this.notify("Le comptage était déjà validé, on passe aux espèces.");
+        }
+        this.handover.closingCash = this.session.opening_cash + this.session.sales_cash - (this.session.refunds_cash || 0);
         this.handover.step = 2;
       });
     },
+    switchToClosing() { this.handover.closing = true; this.handover.validatorId = this.me.id; this.handover.pin = ""; },
     closeSession() {
       return this.run(async () => {
         const result = await this.api("POST", "/api/session/close", {
@@ -527,7 +541,8 @@ const app = createApp({
       this.pos.mode = "vente";
       this.handover = { step: 1, count: null, counted: {}, closingCash: null, validatorId: null, pin: "", result: null, closing: false };
       if (this.isOwner) { await this.goAdmin(); }
-      else { this.logout(true); this.notify(closing ? "Caisse fermée. À demain !" : "Passation terminée. La personne suivante peut se connecter."); }
+      else if (closing) { this.logout(true); this.view = "standby"; }
+      else { this.logout(true); this.notify("Passation terminée. La personne suivante peut se connecter."); }
     },
 
     // ---- gestion

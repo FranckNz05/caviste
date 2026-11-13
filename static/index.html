@@ -13,8 +13,21 @@
 <body>
 <div id="app" v-cloak>
 
+  <!-- ======================= VEILLE (magasin fermé) ======================= -->
+  <div v-if="view === 'standby'" class="login" @dblclick="view = 'login'">
+    <div class="login-card" style="text-align: center">
+      <div class="brand"><span class="mark"><ico name="wine"></ico></span> {{ config.shop_name }}</div>
+      <div class="wave-icon" style="margin: 18px auto 10px"><ico name="lock-open"></ico></div>
+      <h1 style="font-size: 30px">Caisse fermée</h1>
+      <p class="muted" style="margin-top: 8px; font-size: 16px">Merci pour aujourd'hui. Réouverture demain à <strong>{{ settings.opening_time }}</strong>.</p>
+      <p class="muted small" style="margin-top: 18px">Le rayon et la caisse sont certifiés pour la prochaine ouverture.</p>
+      <button class="ghost" style="margin-top: 22px" @click="view = 'login'"><ico name="log-out" class="sm"></ico> Se connecter</button>
+    </div>
+    <p class="foot-note">Caviste · gestion de cave</p>
+  </div>
+
   <!-- ======================= CONNEXION ======================= -->
-  <div v-if="view === 'login'" class="login">
+  <div v-else-if="view === 'login'" class="login">
     <div class="login-card">
       <div class="brand"><span class="mark"><ico name="wine"></ico></span> {{ config.shop_name }}</div>
       <transition name="fade" mode="out-in">
@@ -129,6 +142,7 @@
             <div v-else-if="handover.step === 3" key="s3" class="panel stack" style="max-width: 580px; margin: 0 auto; overflow: visible">
               <div v-if="handover.closing"><h2>Confirmez la fermeture</h2><p class="muted" style="margin-top: 6px">Personne ne reprend la caisse. Confirmez avec votre code que le comptage et les espèces sont ceux que vous laissez.</p></div>
               <div v-else><h2>Qui reprend la caisse ?</h2><p class="muted" style="margin-top: 6px">La personne entrante (ou le propriétaire) confirme avec son code qu'elle accepte le rayon et la caisse tels que comptés.</p></div>
+              <div v-if="!handover.closing" class="hint" style="justify-content: space-between; align-items: center"><span>Personne ne reprend la caisse ?</span><button class="ghost" style="min-height: 32px; padding: 4px 10px" @click="switchToClosing()">C'est une fermeture</button></div>
               <div v-if="!handover.closing" class="user-grid">
                 <div v-for="u in validators" :key="u.id" class="user-tile" :class="{selected: handover.validatorId === u.id}" @click="handover.validatorId = u.id; handover.pin = ''">
                   <span class="avatar xl" :style="{background: u.color}">{{ initials(u.name) }}</span>
@@ -769,6 +783,6 @@
     <div v-if="toast" class="toast" :class="toast.type"><ico :name="toast.type === 'error' ? 'alert' : 'check'" class="sm"></ico>{{ toast.text }}</div>
   </transition>
 </div>
-<script src="/static/app.js?v=10"></script>
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>
