@@ -20,9 +20,13 @@ STATIC_DIR = BASE_DIR / "static"
 async def lifespan(_: FastAPI):
     if MODE == "miroir":
         # Le miroir ne contient que ce que le poste de la boutique envoie : aucune donnée de démo.
+        # Tant que le poste n'a rien envoyé, un compte Patron (code 0000) permet d'entrer ;
+        # le premier envoi complet du poste le remplace par les vrais comptes.
         sync.make_constraints_deferrable()
         Base.metadata.create_all(engine)
         ensure_columns()
+        with SessionLocal() as db:
+            ensure_minimal(db)
     else:
         if MODE == "poste":
             sync.install_capture()
