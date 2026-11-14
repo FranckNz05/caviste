@@ -261,10 +261,14 @@ def create_sale(db: Session, user: User, lines_in, payment_method: str, at: date
     session = get_open_session(db)
     if not session or session.user_id != user.id:
         raise HTTPException(409, "Ouvrez votre session de caisse avant de vendre")
-    settings = get_settings(db)
     if session.status != "ouverte":
         raise HTTPException(409, "Clôture en cours : terminez la passation")
-    sale = Sale(
+    return _record_sale(db, session, user, lines_in, payment_method, at, mobile_part)
+
+
+def _record_sale(db: Session, session: CashSession, user: User, lines_in, payment_method: str, at: datetime | None, mobile_part: float | None, **extra) -> Sale:
+    settings = get_settings(db)
+    sale = Sale(**extra,
         number=next_sale_number(db),
         session_id=session.id,
         user_id=user.id,
@@ -319,6 +323,87 @@ def create_sale(db: Session, user: User, lines_in, payment_method: str, at: date
     db.add(sale)
     db.flush()
     return sale
+
+
+# --- Cahier de secours ---------------------------------------------------------------
+def session_at(db: Session, at: datetime) -> CashSession | None:
+    """La session de caisse qui couvrait cette heure (ouverte avant, pas encore fermée)."""
+    return db.scalars(
+        select(CashSession)
+        .where(CashSession.opened_at <= at, (CashSession.closed_at.is_(None)) | (CashSession.closed_at >= at))
+        .order_by(CashSession.opened_at.desc())
+    ).first()
+
+
+def create_paper_batch(db: Session, entered_by: User, seller: User, paper_ref: str, sales_in, declared_total: float | None) -> dict:
+    """Ressaisie d'une page du cahier : chaque vente garde l'heure notée et rejoint la session de l'époque."""
+    if entered_by.role != "proprietaire" and seller.id != entered_by.id:
+        raise HTTPException(403, "Vous ne pouvez saisir que vos propres ventes du cahier")
+    stamp = now()
+    created: list[Sale] = []
+    closed_sessions: set[str] = set()
+    rescue: CashSession | None = None
+    for item in sorted(sales_in, key=lambda x: x.at):
+        at = item.at.replace(microsecond=0, tzinfo=None)
+        if at > stamp + timedelta(minutes=5):
+            raise HTTPException(400, f"Heure dans le futur : {at:%d/%m %H:%M}")
+        session = session_at(db, at)
+        if session is None or session is rescue:
+            # Aucune caisse ouverte à cette heure (coupure avant l'ouverture, PC éteint) :
+            # les ventes vont dans une session de secours, pour ne pas fausser la caisse en cours
+            # dont le fond, compté à l'ouverture, contenait déjà cet argent.
+            if rescue is None:
+                rescue = CashSession(user_id=seller.id, opened_at=at, opening_cash=0, status="ouverte", notes=f"Session de secours : cahier {paper_ref}".strip())
+                db.add(rescue)
+                db.flush()
+            session = rescue
+        elif session.status == "fermee":
+            if entered_by.role != "proprietaire":
+                raise HTTPException(409, f"La session du {at:%d/%m à %H:%M} est déjà fermée : seul le propriétaire peut saisir ces ventes.")
+            closed_sessions.add(session.id)
+        sale = _record_sale(
+            db, session, seller, item.lines, item.payment_method, at, item.mobile_part,
+            source="cahier", paper_ref=paper_ref, entered_at=stamp, entered_by_id=entered_by.id,
+        )
+        created.append(sale)
+    if rescue is not None:
+        rescue.closed_at = max(x.created_at for x in created if x.session_id == rescue.id)
+        rescue.expected_cash = rescue.opening_cash + rescue.sales_cash - rescue.refunds_cash
+        rescue.closing_cash = rescue.expected_cash
+        rescue.cash_gap = 0
+        rescue.status = "fermee"
+        rescue.validated_by_id = entered_by.id
+        audit(db, entered_by, "session_de_secours", "session", rescue.id, {"caissiere": seller.name, "page": paper_ref, "ventes": rescue.sales_count, "total": rescue.sales_total})
+    # Session déjà clôturée : l'argent de ces ventes était dans la caisse, on recalcule l'écart.
+    for sid in closed_sessions:
+        s = db.get(CashSession, sid)
+        if s.closing_cash is not None:
+            s.expected_cash = s.opening_cash + s.sales_cash - s.refunds_cash
+            s.cash_gap = s.closing_cash - s.expected_cash
+    total = sum(x.total for x in created)
+    gap = None if declared_total is None else round(total - declared_total, 2)
+    audit(
+        db, entered_by, "saisie_cahier", "sale", created[0].id if created else "",
+        {
+            "page": paper_ref, "caissiere": seller.name, "ventes": len(created), "total": total,
+            "total_note": declared_total, "ecart_avec_cahier": gap,
+            "tickets": [x.number for x in created],
+            "apres_cloture": bool(closed_sessions),
+        },
+    )
+    return {"sales": created, "total": total, "declared_total": declared_total, "gap": gap, "after_close": bool(closed_sessions)}
+
+
+def verify_paper_sales(db: Session, owner: User, sale_ids: list[str]) -> int:
+    stamp = now()
+    n = 0
+    for sale in db.scalars(select(Sale).where(Sale.id.in_(sale_ids), Sale.source == "cahier", Sale.verified_at.is_(None))):
+        sale.verified_at = stamp
+        sale.verified_by_id = owner.id
+        n += 1
+    if n:
+        audit(db, owner, "cahier_verifie", "sale", "", {"ventes": n})
+    return n
 
 
 def cancel_sale(db: Session, sale: Sale, actor: User, reason: str, at: datetime | None = None) -> Sale:
@@ -629,7 +714,7 @@ def dashboard(db: Session) -> dict:
             select(AuditLog)
             .options(selectinload(AuditLog.user))
             .where(AuditLog.created_at >= week_ago)
-            .where((AuditLog.out_of_hours.is_(True)) | (AuditLog.action.in_(["vente_annulee", "session_forcee", "retard_passation", "retard_fermeture", "retard_prise_de_poste", "vague_prolongee", "fermeture_prolongee"])))
+            .where((AuditLog.out_of_hours.is_(True)) | (AuditLog.action.in_(["vente_annulee", "session_forcee", "retard_passation", "retard_fermeture", "retard_prise_de_poste", "vague_prolongee", "fermeture_prolongee", "saisie_cahier", "session_de_secours"])))
             .order_by(AuditLog.created_at.desc())
         )
     )

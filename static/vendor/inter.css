@@ -1,0 +1,8 @@
+/* Police Inter embarquée (latin, graisses 400 à 800) : l'application fonctionne hors ligne. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url(inter-latin.woff2) format('woff2');
+}

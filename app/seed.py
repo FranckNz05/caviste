@@ -76,6 +76,14 @@ USERS = [
 ]
 
 
+def ensure_minimal(db: Session) -> None:
+    """Base vide d'une vraie boutique : seulement le compte du patron (code 0000, à changer)."""
+    if db.scalar(select(User).limit(1)):
+        return
+    db.add(User(name="Patron", role="proprietaire", pin_hash=hash_pin("0000"), color="#0f766e"))
+    db.commit()
+
+
 def ensure_demo(db: Session) -> None:
     if db.scalar(select(User).limit(1)):
         return

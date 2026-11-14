@@ -4,11 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Caviste</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=9">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.5.13/vue.global.prod.min.js"></script>
+<link rel="stylesheet" href="/static/vendor/inter.css">
+<link rel="stylesheet" href="/static/style.css?v=13">
+<script src="/static/vendor/vue.global.prod.min.js"></script>
 </head>
 <body>
 <div id="app" v-cloak>
@@ -23,7 +21,7 @@
       <p class="muted small" style="margin-top: 18px">Le rayon et la caisse sont certifiés pour la prochaine ouverture.</p>
       <button class="ghost" style="margin-top: 22px" @click="view = 'login'"><ico name="log-out" class="sm"></ico> Se connecter</button>
     </div>
-    <p class="foot-note">Caviste · gestion de cave</p>
+    <p class="foot-note">Caviste · gestion de cave<span v-if="config.mode === 'miroir'"> · consultation en ligne</span> · Développé par Franck Nz · <a href="tel:064088868">064 08 88 68</a> / <a href="tel:057668371">057 66 83 71</a></p>
   </div>
 
   <!-- ======================= CONNEXION ======================= -->
@@ -55,7 +53,7 @@
         </div>
       </transition>
     </div>
-    <p class="foot-note">Caviste · gestion de cave, démonstration</p>
+    <p class="foot-note">Caviste · gestion de cave<span v-if="config.mode === 'miroir'"> · consultation en ligne</span> · Développé par Franck Nz · <a href="tel:064088868">064 08 88 68</a> / <a href="tel:057668371">057 66 83 71</a></p>
   </div>
 
   <!-- ======================= APPLICATION ======================= -->
@@ -69,7 +67,9 @@
         <transition name="fade">
           <span v-if="session && session.status !== 'fermee'" class="live"><span class="dot"></span> {{ session.user_name }} · {{ session.sales_count }} ventes · {{ money(session.sales_total) }}</span>
         </transition>
-        <button v-if="isOwner && view === 'admin'" class="icon round" title="Ouvrir la caisse" @click="goCaisse()"><ico name="cart"></ico></button>
+        <span v-if="config.mode === 'miroir'" class="live" title="Données envoyées par le poste de la boutique"><ico name="eye-off" class="sm"></ico> Consultation · synchro {{ config.last_sync ? fmtDate(config.last_sync) : 'jamais' }}</span>
+        <button v-if="isOwner && config.mode === 'poste' && syncState" class="live sync-pill" :class="'s-' + syncClass" :title="syncState.last_error || 'Synchronisation avec le web'" @click="setAdminTab('reglages'); view = 'admin'"><span class="dot"></span> {{ syncLabel }}</button>
+        <button v-if="isOwner && view === 'admin' && config.mode !== 'miroir'" class="icon round" title="Ouvrir la caisse" @click="goCaisse()"><ico name="cart"></ico></button>
         <button v-if="isOwner && view === 'caisse'" class="icon round" title="Retour à la gestion" @click="goAdmin()"><ico name="dashboard"></ico></button>
         <span class="avatar" :style="{background: me.color}" :title="me.name">{{ initials(me.name) }}</span>
         <button class="ghost icon round" title="Quitter" @click="logout()"><ico name="log-out"></ico></button>
@@ -208,6 +208,7 @@
               <button :class="{active: pos.mode === 'vente'}" @click="pos.mode = 'vente'; focusSearch()"><ico name="cart" class="sm"></ico> Vendre</button>
               <button :class="{active: pos.mode === 'ventes'}" @click="pos.mode = 'ventes'; loadSales()"><ico name="receipt" class="sm"></ico> Mes ventes <span class="count">{{ session.sales_count }}</span></button>
               <button :class="{active: pos.mode === 'retour'}" @click="openReturns()"><ico name="swap" class="sm"></ico> Retour / échange</button>
+              <button :class="{active: pos.mode === 'cahier'}" @click="pos.mode = 'cahier'"><ico name="book" class="sm"></ico> Cahier</button>
             </div>
             <div class="row" style="gap: 8px">
               <button @click="startHandover(false)"><ico name="swap"></ico> Passer la caisse</button>
@@ -318,6 +319,10 @@
               </div>
             </div>
 
+            <div v-else-if="pos.mode === 'cahier'" key="cahier">
+              <cahier-form @saved="refreshSession()"></cahier-form>
+            </div>
+
             <div v-else key="ventes" class="panel">
               <table v-if="sales.length">
                 <tr><th>N°</th><th>Heure</th><th>Articles</th><th>Paiement</th><th class="num">Total</th><th></th></tr>
@@ -384,7 +389,7 @@
           </template>
           <button v-if="admin.tab === 'inventaire' && !inventory" class="primary" @click="startInventory()"><ico name="clipboard" class="sm"></ico> Démarrer un inventaire</button>
           <button v-if="admin.tab === 'equipe'" class="primary" @click="editUser(null)"><ico name="plus" class="sm"></ico> Ajouter une personne</button>
-          <button v-if="admin.tab === 'tableau'" class="primary" @click="goCaisse()"><ico name="cart" class="sm"></ico> Ouvrir la caisse</button>
+          <button v-if="admin.tab === 'tableau' && config.mode !== 'miroir'" class="primary" @click="goCaisse()"><ico name="cart" class="sm"></ico> Ouvrir la caisse</button>
         </div>
       </div>
 
@@ -637,6 +642,40 @@
           </div>
         </div>
 
+        <!-- Cahier de secours -->
+        <div v-else-if="admin.tab === 'cahier'" key="cahier" class="stack">
+          <div class="row between" style="gap: 10px; flex-wrap: wrap">
+            <div class="seg">
+              <button :class="{active: cahier.filter === 'a_verifier'}" @click="loadCahier('a_verifier')">À vérifier</button>
+              <button :class="{active: cahier.filter === 'tous'}" @click="loadCahier('tous')">Toutes</button>
+            </div>
+            <div class="row" style="gap: 8px">
+              <button v-if="config.mode !== 'miroir'" @click="cahier.showForm = !cahier.showForm"><ico :name="cahier.showForm ? 'x' : 'plus'" class="sm"></ico> {{ cahier.showForm ? 'Fermer la saisie' : 'Saisir une page du cahier' }}</button>
+              <button v-if="config.mode !== 'miroir' && cahier.filter === 'a_verifier'" class="primary" :disabled="!Object.values(cahier.sel).some(Boolean)" @click="verifyCahier(Object.keys(cahier.sel).filter(k => cahier.sel[k]))"><ico name="check" class="sm"></ico> Valider la sélection</button>
+            </div>
+          </div>
+          <cahier-form v-if="cahier.showForm" @saved="loadCahier()"></cahier-form>
+          <div class="panel">
+            <p class="muted small" style="margin-bottom: 10px">Comparez chaque ligne avec le cahier papier, puis cochez et validez. Une vente mal recopiée s'annule avec un motif ; elle reste dans le journal.</p>
+            <table v-if="cahier.list.length">
+              <tr><th v-if="cahier.filter === 'a_verifier'" style="width: 36px"><input type="checkbox" :checked="cahier.list.length && cahier.list.every(s => cahier.sel[s.id])" @change="cahier.list.forEach(s => cahier.sel[s.id] = $event.target.checked)"></th><th>N°</th><th>Heure notée</th><th>Cahier</th><th>Vendeuse</th><th>Articles</th><th>Paiement</th><th class="num">Total</th><th>Saisie</th><th></th></tr>
+              <tr v-for="s in cahier.list" :key="s.id" :style="s.status === 'annulee' ? 'opacity: .5; text-decoration: line-through' : ''">
+                <td v-if="cahier.filter === 'a_verifier'"><input type="checkbox" v-model="cahier.sel[s.id]"></td>
+                <td><strong class="num">{{ s.number }}</strong></td>
+                <td class="small" style="white-space: nowrap">{{ fmtDate(s.created_at) }}</td>
+                <td class="small">{{ s.paper_ref || '—' }}</td>
+                <td>{{ s.user_name }}</td>
+                <td class="small">{{ s.lines.map(l => (l.pack && l.pack !== 'unite' ? l.packs + ' ' + packLabel(l.pack) + ' ' : l.qty + '× ') + l.product_name).join(', ') }}</td>
+                <td class="small">{{ s.payment_method === 'mobile' ? 'Mobile' : s.payment_method === 'mixte' ? 'Mobile ' + money(s.paid_mobile) + ' + espèces ' + money(s.paid_cash) : 'Espèces' }}</td>
+                <td class="num">{{ money(s.total) }}</td>
+                <td class="tiny muted">par {{ s.entered_by_name }}<br>{{ fmtDate(s.entered_at) }}<template v-if="s.verified_at"><br><span class="badge ok">vérifiée</span></template></td>
+                <td class="right"><button v-if="s.status === 'valide' && config.mode !== 'miroir'" class="danger" @click="askCancel(s)">Annuler</button><span v-else-if="s.status !== 'valide'" class="small muted">{{ s.cancel_reason }}</span></td>
+              </tr>
+            </table>
+            <div v-else class="empty"><ico name="book"></ico><span>{{ cahier.filter === 'a_verifier' ? 'Aucune vente du cahier à vérifier.' : 'Aucune vente saisie depuis le cahier.' }}</span></div>
+          </div>
+        </div>
+
         <!-- Réglages -->
         <div v-else-if="admin.tab === 'reglages'" key="reglages" class="cards">
           <div class="card stack">
@@ -651,6 +690,20 @@
             <div><h3>Mobile Money</h3><p class="muted small" style="margin-top: 4px">Les frais de retrait sont ajoutés au montant que le client envoie, pour que la boutique encaisse le prix affiché.</p></div>
             <label class="f">Frais de retrait (%)<input type="number" step="0.1" min="0" max="50" v-model="settingsForm.momo_fee_pct" style="max-width: 160px"></label>
             <div class="row end"><button class="primary" @click="saveSettings()"><ico name="check" class="sm"></ico> Enregistrer</button></div>
+          </div>
+          <div v-if="config.mode === 'poste'" class="card stack">
+            <div><h3>Synchronisation avec le web</h3><p class="muted small" style="margin-top: 4px">La boutique fonctionne sans Internet. Tout ce qui est fait ici est envoyé à votre espace en ligne dès que la connexion est là, pour que vous puissiez suivre la cave de partout.</p></div>
+            <div v-if="syncState" class="row" style="gap: 8px; flex-wrap: wrap">
+              <span class="badge" :class="syncClass === 'ok' ? 'ok' : syncClass === 'off' ? 'alerte' : 'attention'">{{ syncLabel }}</span>
+              <span class="muted small" v-if="syncState.last_ok">Dernier envoi réussi : {{ fmtDate(syncState.last_ok) }}</span>
+            </div>
+            <p v-if="syncState && syncState.last_error" class="hint warn"><ico name="alert"></ico><span>{{ syncState.last_error }}</span></p>
+            <label class="f">Adresse de l'espace en ligne<input v-model="syncForm.url" placeholder="https://caviste.onrender.com"></label>
+            <label class="f">Clé de synchronisation<input v-model="syncForm.key" type="password" :placeholder="syncState && syncState.has_key ? 'Clé enregistrée (laisser vide pour la garder)' : 'Fournie avec votre espace en ligne'"></label>
+            <div class="row end" style="gap: 8px">
+              <button class="ghost" @click="syncNow()" :disabled="!syncState || !syncState.configured"><ico name="refresh" class="sm"></ico> Synchroniser maintenant</button>
+              <button class="primary" @click="saveSync()"><ico name="check" class="sm"></ico> Enregistrer</button>
+            </div>
           </div>
           <div class="card stack">
             <h3>Ce que voient les caissières</h3>
@@ -675,6 +728,7 @@
         <div v-else key="loading" class="empty"><span>Chargement…</span></div>
       </transition>
     </main>
+    <footer class="app-credit">Caviste · Développé par Franck Nz · <a href="tel:064088868">064 08 88 68</a> / <a href="tel:057668371">057 66 83 71</a></footer>
   </div>
 
   <!-- ======================= MODALES ======================= -->
@@ -783,6 +837,6 @@
     <div v-if="toast" class="toast" :class="toast.type"><ico :name="toast.type === 'error' ? 'alert' : 'check'" class="sm"></ico>{{ toast.text }}</div>
   </transition>
 </div>
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=13"></script>
 </body>
 </html>

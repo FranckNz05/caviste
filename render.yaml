@@ -1,4 +1,6 @@
 # Blueprint Render : un service web Python + une base PostgreSQL.
+# Le service est le miroir en ligne du patron : il reçoit les données du poste de la
+# boutique (application de bureau) et les affiche en consultation.
 # Sur Render : New > Blueprint > choisir le dépôt > Apply.
 services:
   - type: web
@@ -19,6 +21,14 @@ services:
           property: connectionString
       - key: CAVISTE_SECRET
         generateValue: true
+      - key: CAVISTE_MODE
+        value: miroir
+      # Clé à recopier dans l'application de bureau (Réglages > Synchronisation avec le web).
+      - key: CAVISTE_SYNC_KEY
+        generateValue: true
+      # Fuseau de la boutique : sert aux filtres "aujourd'hui" / "cette semaine".
+      - key: TZ
+        value: Africa/Brazzaville
       - key: CAVISTE_SHOP_NAME
         value: La Cave
       - key: CAVISTE_CURRENCY

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import gzip
+import hmac
+import json
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from . import services
+from . import services, sync
 from .auth import check_user_pin, create_token, current_user, hash_pin, owner_only, verify_pin
-from .config import CURRENCY, HANDOVER_RANDOM_SAMPLE, SHOP_NAME
+from .config import CURRENCY, HANDOVER_RANDOM_SAMPLE, MODE, SHOP_NAME, SYNC_KEY
 from .database import get_db
 from .models import AuditLog, CashSession, Product, Return, Sale, StockCount, StockMovement, User
 from .schemas import (
@@ -15,6 +20,8 @@ from .schemas import (
     CountSubmitIn,
     DefectiveClearIn,
     OverrunIn,
+    PaperBatchIn,
+    PaperVerifyIn,
     ReturnIn,
     ReturnOut,
     LoginIn,
@@ -45,7 +52,79 @@ router = APIRouter(prefix="/api")
 # --- Divers ----------------------------------------------------------------------
 @router.get("/config")
 def get_config(db: Session = Depends(get_db)):
-    return {"shop_name": services.get_settings(db)["shop_name"], "currency": CURRENCY, "handover_sample": HANDOVER_RANDOM_SAMPLE}
+    out = {
+        "shop_name": services.get_settings(db)["shop_name"],
+        "currency": CURRENCY,
+        "handover_sample": HANDOVER_RANDOM_SAMPLE,
+        "mode": MODE,
+        "credits": {"author": "Franck Nz", "phones": ["064 08 88 68", "057 66 83 71"]},
+    }
+    if MODE == "miroir":
+        out["last_sync"] = sync.mirror_last_push(db)
+    return out
+
+
+@router.get("/ping")
+def ping():
+    return {"ok": True}
+
+
+# --- Synchronisation -------------------------------------------------------------
+class SyncConfigIn(BaseModel):
+    url: str
+    key: str | None = None
+
+
+def _poste_only():
+    if MODE != "poste":
+        raise HTTPException(404, "Disponible uniquement sur le poste de la boutique")
+
+
+@router.get("/sync/status")
+def sync_status(_: User = Depends(owner_only)):
+    _poste_only()
+    return sync.status()
+
+
+@router.put("/sync/config")
+def sync_config(data: SyncConfigIn, owner: User = Depends(owner_only)):
+    _poste_only()
+    url = data.url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "L'adresse doit commencer par https://")
+    return sync.configure(url, data.key)
+
+
+@router.post("/sync/now")
+def sync_now(_: User = Depends(owner_only)):
+    _poste_only()
+    try:
+        result = sync.worker.run_now()
+    except ConnectionError as e:
+        raise HTTPException(503, str(e)) from e
+    except sync.SyncError as e:
+        raise HTTPException(502, str(e)) from e
+    return {**sync.status(), **result}
+
+
+@router.post("/sync/push", include_in_schema=False)
+async def sync_push(request: Request, x_sync_key: str | None = Header(default=None)):
+    if MODE != "miroir":
+        raise HTTPException(404, "Ce serveur n'est pas un miroir")
+    if not SYNC_KEY:
+        raise HTTPException(503, "CAVISTE_SYNC_KEY n'est pas défini sur le serveur")
+    if not x_sync_key or not hmac.compare_digest(x_sync_key, SYNC_KEY):
+        raise HTTPException(403, "Clé de synchronisation invalide")
+    body = await request.body()
+    if request.headers.get("content-encoding", "").lower() == "gzip":
+        body = gzip.decompress(body)
+    try:
+        payload = json.loads(body)
+    except ValueError as e:
+        raise HTTPException(400, "Contenu illisible") from e
+    from starlette.concurrency import run_in_threadpool
+
+    return await run_in_threadpool(sync.apply_push, payload)
 
 
 @router.get("/settings", response_model=SettingsOut)
@@ -65,7 +144,10 @@ def update_settings(data: SettingsIn, owner: User = Depends(owner_only), db: Ses
 # --- Connexion -------------------------------------------------------------------
 @router.get("/users/login-list", response_model=list[UserOut])
 def login_list(db: Session = Depends(get_db)):
-    return list(db.scalars(select(User).where(User.active.is_(True)).order_by(User.role.desc(), User.name)))
+    q = select(User).where(User.active.is_(True)).order_by(User.role.desc(), User.name)
+    if MODE == "miroir":
+        q = q.where(User.role == "proprietaire")
+    return list(db.scalars(q))
 
 
 @router.post("/auth/login", response_model=LoginOut)
@@ -73,8 +155,13 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     user = db.get(User, data.user_id)
     if not user or not user.active or not verify_pin(data.pin, user.pin_hash):
         raise HTTPException(401, "PIN incorrect")
-    services.audit(db, user, "connexion")
-    db.commit()
+    if MODE == "miroir":
+        # Le miroir est une copie exacte du poste : on n'y écrit rien.
+        if user.role != "proprietaire":
+            raise HTTPException(403, "Accès en ligne réservé au propriétaire")
+    else:
+        services.audit(db, user, "connexion")
+        db.commit()
     return LoginOut(token=create_token(user.id), user=UserOut.model_validate(user))
 
 
@@ -248,7 +335,11 @@ def _session_out(s: CashSession) -> SessionOut:
 @router.get("/session/current")
 def current_session(user: User = Depends(current_user), db: Session = Depends(get_db)):
     s = services.get_open_session(db)
-    last_closed = db.scalars(select(CashSession).where(CashSession.status == "fermee").order_by(CashSession.closed_at.desc())).first()
+    last_closed = db.scalars(
+        select(CashSession)
+        .where(CashSession.status == "fermee", ~CashSession.notes.startswith("Session de secours"))
+        .order_by(CashSession.closed_at.desc())
+    ).first()
     return {
         "session": _session_out(s) if s else None,
         "is_mine": bool(s and s.user_id == user.id),
@@ -347,6 +438,47 @@ def create_sale(data: SaleIn, user: User = Depends(current_user), db: Session = 
     db.commit()
     db.refresh(sale)
     return _sale_out(sale)
+
+
+# --- Cahier de secours ---------------------------------------------------------------
+@router.post("/cahier")
+def paper_batch(data: PaperBatchIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    seller = db.get(User, data.seller_id)
+    if not seller:
+        raise HTTPException(404, "Vendeur inconnu")
+    out = services.create_paper_batch(db, user, seller, data.paper_ref.strip(), data.sales, data.declared_total)
+    db.commit()
+    return {**out, "sales": [_sale_out(x) for x in out["sales"]]}
+
+
+@router.get("/cahier")
+def paper_list(status: str = "a_verifier", days: int = Query(60, le=365), _: User = Depends(owner_only), db: Session = Depends(get_db)):
+    from datetime import timedelta
+
+    q = (
+        select(Sale)
+        .options(selectinload(Sale.lines), selectinload(Sale.user))
+        .where(Sale.source == "cahier", Sale.created_at >= services.now() - timedelta(days=days))
+        .order_by(Sale.created_at.desc())
+    )
+    if status == "a_verifier":
+        q = q.where(Sale.verified_at.is_(None), Sale.status == "valide")
+    sales = list(db.scalars(q))
+    names = {u.id: u.name for u in db.scalars(select(User))}
+    out = []
+    for s in sales:
+        d = _sale_out(s).model_dump()
+        d["entered_by_name"] = names.get(s.entered_by_id, "")
+        d["verified_by_name"] = names.get(s.verified_by_id, "")
+        out.append(d)
+    return out
+
+
+@router.post("/cahier/verify")
+def paper_verify(data: PaperVerifyIn, owner: User = Depends(owner_only), db: Session = Depends(get_db)):
+    n = services.verify_paper_sales(db, owner, data.sale_ids)
+    db.commit()
+    return {"verified": n}
 
 
 @router.post("/sales/{sale_id}/cancel", response_model=SaleOut)

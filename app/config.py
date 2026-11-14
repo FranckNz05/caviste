@@ -4,15 +4,30 @@ Tout se règle par variables d'environnement, avec des valeurs par défaut
 pensées pour la démo locale :
 - DATABASE_URL : sqlite par défaut (poste boutique), PostgreSQL pour le central.
 - CAVISTE_SECRET : clé de signature des jetons de connexion.
+- CAVISTE_MODE : web (démo, par défaut), poste (application de bureau hors ligne,
+  synchronisée vers le web) ou miroir (serveur web du patron, en consultation,
+  alimenté par le poste de la boutique).
+- CAVISTE_DATA_DIR : dossier des données (base SQLite, réglages de synchro).
+- CAVISTE_DEMO : 1 pour charger les données de démonstration dans une base vide.
+- CAVISTE_SYNC_KEY : (miroir) clé que le poste doit présenter pour envoyer ses données.
 """
 from __future__ import annotations
 
 import os
+import secrets
+import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)
+# Une fois empaqueté (PyInstaller), les fichiers de l'application sont extraits dans _MEIPASS.
+BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+DATA_DIR = Path(os.environ.get("CAVISTE_DATA_DIR") or (BASE_DIR / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+MODE: str = os.environ.get("CAVISTE_MODE", "web").strip().lower()
+if MODE not in ("web", "poste", "miroir"):
+    MODE = "web"
+DEMO: bool = os.environ.get("CAVISTE_DEMO", "0" if MODE == "poste" else "1") == "1"
+SYNC_KEY: str = os.environ.get("CAVISTE_SYNC_KEY", "")
 
 def _normalize_db_url(url: str) -> str:
     """Render (et d'autres hébergeurs) fournissent une URL en postgres:// ;
@@ -27,7 +42,15 @@ def _normalize_db_url(url: str) -> str:
 DATABASE_URL: str = _normalize_db_url(
     os.environ.get("DATABASE_URL", f"sqlite:///{(DATA_DIR / 'caviste.db').as_posix()}")
 )
-SECRET_KEY: str = os.environ.get("CAVISTE_SECRET", "demo-caviste-change-me")
+def _local_secret() -> str:
+    """Poste de bureau : une clé propre à l'installation, créée au premier lancement."""
+    path = DATA_DIR / "secret.key"
+    if not path.exists():
+        path.write_text(secrets.token_hex(32), encoding="utf-8")
+    return path.read_text(encoding="utf-8").strip()
+
+
+SECRET_KEY: str = os.environ.get("CAVISTE_SECRET") or (_local_secret() if MODE == "poste" else "demo-caviste-change-me")
 TOKEN_TTL_SECONDS: int = int(os.environ.get("CAVISTE_TOKEN_TTL", 12 * 3600))
 
 SHOP_NAME: str = os.environ.get("CAVISTE_SHOP_NAME", "La Cave")

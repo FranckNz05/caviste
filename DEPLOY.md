@@ -1,4 +1,11 @@
-# Déployer la démo sur Render
+# Déployer l'espace en ligne du patron sur Render
+
+Le service Render fonctionne en **miroir** (`CAVISTE_MODE=miroir`) : il ne contient que ce
+que le poste de la boutique lui envoie, et ne se modifie pas depuis le web. Seul le
+propriétaire peut s'y connecter.
+
+> Pour garder l'ancienne démo web autonome (avec données fictives), retirer `CAVISTE_MODE`
+> des variables du service.
 
 Render déploie depuis un dépôt Git (GitHub ou GitLab). Le dossier `Caviste` doit être
 la racine du dépôt : `render.yaml`, `requirements.txt` et `app/` à la racine.
@@ -47,12 +54,27 @@ git push -u origin main
   connexion. Ne pas le partager.
 - **Mises à jour** : chaque `git push` sur `main` redéploie automatiquement.
 
-## 4. Variables d'environnement
+## 4. Relier le poste de la boutique
+
+1. Sur Render, service `caviste` > **Environment** : copier la valeur de `CAVISTE_SYNC_KEY`.
+2. Sur le poste (application de bureau), se connecter en Patron > **Réglages** >
+   **Synchronisation avec le web** : adresse `https://caviste.onrender.com` et la clé. Enregistrer.
+3. Le premier envoi est complet (il remplace tout le contenu du miroir), puis seuls les
+   changements partent. Sans connexion, ils attendent et partent dès qu'elle revient.
+4. Le patron se connecte sur le site avec son code habituel (celui du poste).
+
+Le plan gratuit endort le service : le premier envoi après une pause peut échouer le temps
+du réveil (30 à 60 s) ; le poste réessaie tout seul.
+
+## 5. Variables d'environnement
 
 | Variable | Rôle | Valeur sur Render |
 | --- | --- | --- |
 | `DATABASE_URL` | Base PostgreSQL | Fournie par la base `caviste-db` |
 | `CAVISTE_SECRET` | Signature des jetons | Générée |
+| `CAVISTE_MODE` | `miroir` : consultation, alimentée par le poste | `miroir` |
+| `CAVISTE_SYNC_KEY` | Clé que le poste présente pour envoyer ses données | Générée |
+| `TZ` | Fuseau de la boutique (filtres "aujourd'hui") | `Africa/Brazzaville` |
 | `CAVISTE_SHOP_NAME` | Nom par défaut de la cave | `La Cave` (modifiable ensuite dans Réglages) |
 | `CAVISTE_CURRENCY` | Devise affichée | `FCFA` |
 | `PYTHON_VERSION` | Version Python | `3.12.8` |

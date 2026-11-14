@@ -127,6 +127,13 @@ class Sale(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cancelled_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     cancel_reason: Mapped[str] = mapped_column(Text, default="")
+    # Ventes notées à la main pendant une coupure, ressaisies ensuite (created_at = heure notée).
+    source: Mapped[str] = mapped_column(String(10), default="caisse")  # caisse | cahier
+    paper_ref: Mapped[str] = mapped_column(String(80), default="")  # page / ligne du cahier
+    entered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    entered_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    verified_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     session: Mapped[CashSession] = relationship(back_populates="sales")
     user: Mapped[User] = relationship(foreign_keys=[user_id])

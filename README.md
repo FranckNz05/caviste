@@ -1,4 +1,6 @@
-# Caviste : démo web
+# Caviste
+
+Développé par Franck Nz · 064 08 88 68 / 057 66 83 71
 
 Gestion de cave (vins, whisky, boissons) pour une boutique à deux caissières qui se relaient.
 Le rayon est la variable de contrôle : il est compté à chaque passation, et tout écart
@@ -14,6 +16,55 @@ Puis ouvrir http://127.0.0.1:8765. La première exécution crée la base SQLite 
 et charge deux semaines de données de démonstration.
 
 Comptes de démo : Patron (0000, propriétaire), Aline (1111), Bénédicte (2222).
+
+## Application de bureau (poste de la boutique)
+
+```
+build.bat
+```
+
+Produit `dist\Caviste-Installation-1.0.0.exe` (PyInstaller + Inno Setup 6). L'installeur ne
+demande pas de droits administrateur et installe dans `%LOCALAPPDATA%\Programs\Caviste`.
+
+- Fonctionne sans Internet : serveur local et base SQLite dans `%LOCALAPPDATA%\Caviste\boutique`.
+  La désinstallation ne supprime jamais ces données.
+- La fenêtre est Microsoft Edge en mode application (présent sur Windows 10/11) ; à défaut,
+  le navigateur par défaut. Fermer la fenêtre arrête l'application au bout d'une minute.
+- Premier lancement : base vide, un seul compte Patron (code 0000, à changer dans Équipe).
+- Raccourci facultatif "Caviste (démonstration)" : cave fictive séparée, jamais synchronisée.
+
+## Synchronisation avec le web (espace du patron)
+
+Le poste est la référence ; le serveur web (Render, `CAVISTE_MODE=miroir`) en est une copie
+en consultation, accessible au seul propriétaire.
+
+- Chaque écriture du poste est notée dans une file d'attente locale (`sync_outbox`).
+- Un fil de fond tente l'envoi toutes les 10 à 30 secondes ; dès que la connexion revient,
+  tout ce qui a été fait hors ligne part. L'envoi est idempotent (lignes recopiées par UUID).
+- Premier envoi complet : le miroir est vidé puis rempli. Changer d'adresse ou de clé relance
+  un envoi complet.
+- Réglage sur le poste : Gestion > Réglages > Synchronisation avec le web (adresse du site et
+  clé `CAVISTE_SYNC_KEY` du serveur). La pastille en haut indique l'état (synchronisé, en attente,
+  hors ligne).
+- Sur le miroir, toute modification est refusée : on change les prix, l'équipe, etc. sur le poste.
+
+## Cahier de secours (coupure longue, PC éteint)
+
+Pendant la coupure, on note chaque vente dans un cahier : heure, articles, paiement, et le total
+en bas de page. Au retour du courant :
+
+1. Caisse > onglet **Cahier** (la caissière, pour ses ventes) ou Gestion > **Cahier** (le patron,
+   pour n'importe qui) : date, page, total noté, puis chaque vente avec son heure.
+2. Le total saisi est comparé au total de la page ; un écart est signalé au patron.
+3. Chaque vente garde son heure réelle et rejoint la session de caisse de l'époque. Si aucune
+   caisse n'était ouverte à cette heure (coupure avant l'ouverture), elle va dans une
+   **session de secours** fermée, pour ne pas fausser la caisse en cours.
+4. Le patron compare la liste avec le cahier papier et valide (Gestion > Cahier > À vérifier) ;
+   une vente mal recopiée s'annule avec un motif.
+
+À faire **avant la passation** : sinon les bouteilles vendues pendant la coupure apparaissent
+comme manquantes au comptage. Une saisie dans une session déjà fermée est réservée au patron
+(l'écart de caisse de la session est alors recalculé).
 
 ## Base de données
 

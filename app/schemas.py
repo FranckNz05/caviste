@@ -231,7 +231,29 @@ class SaleOut(ORM):
     amount_due: float
     status: str
     cancel_reason: str
+    source: str = "caisse"
+    paper_ref: str = ""
+    entered_at: datetime | None = None
+    verified_at: datetime | None = None
     lines: list[SaleLineOut]
+
+
+class PaperSaleIn(BaseModel):
+    at: datetime  # date et heure notées dans le cahier
+    lines: list[SaleLineIn] = Field(min_length=1)
+    payment_method: str = Field(default="especes", pattern=r"^(especes|mobile|mixte)$")
+    mobile_part: float | None = Field(default=None, ge=0)
+
+
+class PaperBatchIn(BaseModel):
+    seller_id: str
+    paper_ref: str = Field(default="", max_length=80)
+    declared_total: float | None = Field(default=None, ge=0)  # total écrit en bas de la page
+    sales: list[PaperSaleIn] = Field(min_length=1, max_length=300)
+
+
+class PaperVerifyIn(BaseModel):
+    sale_ids: list[str] = Field(min_length=1)
 
 
 class SaleCancelIn(BaseModel):
